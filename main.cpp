@@ -2,12 +2,22 @@
 #include <aio/net/dgram.h>
 #include <aio/net/dns.h>
 #include <zero/log.h>
+#include <zero/cmdline.h>
 #include <zero/os/net.h>
 
 using namespace std::chrono_literals;
 
-int main() {
+int main(int argc, char *argv[]) {
     INIT_CONSOLE_LOG(zero::INFO_LEVEL);
+
+    zero::Cmdline cmdline;
+
+    cmdline.add<std::string>("ip", "listen ip");
+    cmdline.add<unsigned short>("port", "bind port");
+    cmdline.addOptional<std::string>("username", '\0', "auth username");
+    cmdline.addOptional<std::string>("password", '\0', "auth password");
+
+    cmdline.parse(argc, argv);
 
 #ifdef _WIN32
     WSADATA wsaData;
@@ -18,12 +28,17 @@ int main() {
     }
 #endif
 
+    auto ip = cmdline.get<std::string>("ip");
+    auto port = cmdline.get<unsigned short>("port");
+    auto username = cmdline.getOptional<std::string>("username");
+    auto password = cmdline.getOptional<std::string>("password");
+
     std::shared_ptr<aio::Context> context = aio::newContext();
 
     if (!context)
         return -1;
 
-    zero::ptr::RefPtr<aio::net::stream::Listener> listener = aio::net::stream::listen(context, "127.0.0.1", 1080);
+    zero::ptr::RefPtr<aio::net::stream::Listener> listener = aio::net::stream::listen(context, ip, port);
 
     if (!listener)
         return -1;
@@ -35,9 +50,56 @@ int main() {
                     return zero::async::promise::reject<std::vector<std::byte>>({-1, "unsupported version"});
 
                 return buffer->readExactly(std::to_integer<size_t>(data[1]));
-            })->then([=](nonstd::span<const std::byte>) {
-                auto response = {std::byte{5}, std::byte{0}};
-                return buffer->write(response);
+            })->then([=](nonstd::span<const std::byte> data) {
+                if (!username || !password) {
+                    auto response = {std::byte{5}, std::byte{0}};
+                    return buffer->write(response);
+                }
+
+                if (std::find(data.begin(), data.end(), std::byte{2}) == data.end()) {
+                    auto response = {std::byte{5}, std::byte{0xff}};
+                    return buffer->write(response)->then([]() {
+                        return zero::async::promise::reject<void>({-1, "unsupported method"});
+                    });
+                }
+
+                auto response = {std::byte{5}, std::byte{2}};
+
+                return buffer->write(response)->then([=]() {
+                    return buffer->readExactly(1);
+                })->then([=](nonstd::span<const std::byte> data) {
+                    if (data[0] != std::byte{1}) {
+                        auto response = {std::byte{1}, std::byte{1}};
+                        return buffer->write(response)->then([]() {
+                            return zero::async::promise::reject<void>({-1, "unsupported auth version"});
+                        });
+                    }
+
+                    return buffer->readExactly(1)->then([=](nonstd::span<const std::byte> data) {
+                        return buffer->readExactly(std::to_integer<size_t>(data[0]));
+                    })->then([=](nonstd::span<const std::byte> data) {
+                        if (std::string_view{(const char *) data.data(), data.size()} != *username) {
+                            auto response = {std::byte{1}, std::byte{1}};
+                            return buffer->write(response)->then([]() {
+                                return zero::async::promise::reject<std::vector<std::byte>>({-1, "auth failed"});
+                            });
+                        }
+
+                        return buffer->readExactly(1);
+                    })->then([=](nonstd::span<const std::byte> data) {
+                        return buffer->readExactly(std::to_integer<size_t>(data[0]));
+                    })->then([=](nonstd::span<const std::byte> data) {
+                        if (std::string_view{(const char *) data.data(), data.size()} != *password) {
+                            auto response = {std::byte{1}, std::byte{1}};
+                            return buffer->write(response)->then([]() {
+                                return zero::async::promise::reject<void>({-1, "auth failed"});
+                            });
+                        }
+
+                        auto response = {std::byte{1}, std::byte{0}};
+                        return buffer->write(response);
+                    });
+                });
             })->then([=]() {
                 return buffer->readExactly(4);
             })->then([=](nonstd::span<const std::byte> data) {
