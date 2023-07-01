@@ -207,7 +207,7 @@ int main(int argc, char *argv[]) {
 
                         std::vector<std::byte> response = {std::byte{5}, std::byte{0}, std::byte{0}, std::byte{1}};
 
-                        response.insert(response.end(), ipv4Address.ip, ipv4Address.ip + 4);
+                        response.insert(response.end(), ipv4Address.ip.begin(), ipv4Address.ip.end());
                         response.insert(
                                 response.end(),
                                 (const std::byte *) &bindPort,
@@ -234,8 +234,7 @@ int main(int argc, char *argv[]) {
                                             if (!*address)
                                                 *address = fromAddress;
 
-                                            if (memcmp(fromAddress.ip, address.operator*()->ip, 4) != 0 ||
-                                                fromAddress.port != address.operator*()->port) {
+                                            if (fromAddress != **address) {
                                                 unsigned short port = htons(fromAddress.port);
 
                                                 std::vector<std::byte> response = {
@@ -244,7 +243,12 @@ int main(int argc, char *argv[]) {
                                                         std::byte{1}
                                                 };
 
-                                                response.insert(response.end(), fromAddress.ip, fromAddress.ip + 4);
+                                                response.insert(
+                                                        response.end(),
+                                                        fromAddress.ip.begin(),
+                                                        fromAddress.ip.end()
+                                                );
+
                                                 response.insert(
                                                         response.end(),
                                                         (const std::byte *) &port,
@@ -271,6 +275,7 @@ int main(int argc, char *argv[]) {
                                                     host = zero::os::net::stringify(data.subspan<4, 4>());
                                                     port = ntohs(*(uint16_t *) (data.data() + 8));
                                                     payload = data.subspan(10);
+
                                                     break;
 
                                                 case 3: {
