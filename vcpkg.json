@@ -11,6 +11,13 @@
     {
       "name": "curl",
       "default-features": false
+    },
+    {
+      "name": "zero",
+      "features": [
+        "legacy"
+      ],
+      "platform": "windows"
     }
   ]
 }
